@@ -1,0 +1,539 @@
+Import dateparsekit
+Import timezonekit
+
+Private Function TemporalEqual(a As String, b As String) As Boolean
+    Return String.Compare(a, b, True) = 0
+End Function
+
+Private Function TemporalPad(n As Integer, width As Integer) As String
+    Dim text As String = Str(n)
+    While String.Len(text) < width
+        text = "0" + text
+    End While
+    Return text
+End Function
+
+Private Function TemporalMonthDays(year As Integer, month As Integer) As Integer
+    If month = 2 Then
+        If year Mod 4 = 0 And (year Mod 100 <> 0 Or year Mod 400 = 0) Then Return 29
+        Return 28
+    End If
+    If month = 4 Or month = 6 Or month = 9 Or month = 11 Then Return 30
+    Return 31
+End Function
+
+Public Class TemporalDateOnly
+    Private Property mYear As Integer
+    Private Property mMonth As Integer
+    Private Property mDay As Integer
+    Public Sub Constructor(year As Integer, month As Integer, day As Integer)
+        If year < 1 Or year > 9999 Or month < 1 Or month > 12 Then Throw New InvalidArgumentException("Date range")
+        If day < 1 Or day > TemporalMonthDays(year, month) Then Throw New InvalidArgumentException("Day range")
+        mYear = year
+        mMonth = month
+        mDay = day
+    End Sub
+    Public Property Year As Integer
+        Get
+            Return mYear
+        End Get
+    End Property
+    Public Property Month As Integer
+        Get
+            Return mMonth
+        End Get
+    End Property
+    Public Property Day As Integer
+        Get
+            Return mDay
+        End Get
+    End Property
+    Public Function ToInvariant() As String
+    Return TemporalPad(mYear, 4) + "-" + TemporalPad(mMonth, 2) + "-" + TemporalPad(mDay, 2)
+    End Function
+End Class
+
+Public Class TemporalTimeOfDay
+    Private Property mHour As Integer
+    Private Property mMinute As Integer
+    Private Property mSecond As Integer
+    Private Property mMillisecond As Integer
+    Public Sub Constructor(hour As Integer, minute As Integer, second As Integer = 0, millisecond As Integer = 0)
+        If hour < 0 Or hour > 23 Or minute < 0 Or minute > 59 Or second < 0 Or second > 59 Or millisecond < 0 Or millisecond > 999 Then Throw New InvalidArgumentException("Time range")
+        mHour = hour
+        mMinute = minute
+        mSecond = second
+        mMillisecond = millisecond
+    End Sub
+    Public Property Hour As Integer
+        Get
+            Return mHour
+        End Get
+    End Property
+    Public Property Minute As Integer
+        Get
+            Return mMinute
+        End Get
+    End Property
+    Public Property Second As Integer
+        Get
+            Return mSecond
+        End Get
+    End Property
+    Public Property Millisecond As Integer
+        Get
+            Return mMillisecond
+        End Get
+    End Property
+    Public Function ToInvariant() As String
+    Return TemporalPad(mHour, 2) + ":" + TemporalPad(mMinute, 2) + ":" + TemporalPad(mSecond, 2) + "." + TemporalPad(mMillisecond, 3)
+    End Function
+End Class
+
+Public Class TemporalDurationMillis
+    Private Property mMilliseconds As Integer
+    Public Sub Constructor(milliseconds As Integer)
+        mMilliseconds = milliseconds
+    End Sub
+    Public Property Milliseconds As Integer
+        Get
+            Return mMilliseconds
+        End Get
+    End Property
+    Public Function ToInvariant() As String
+        Dim n As Integer = mMilliseconds
+        Dim sign As String = ""
+        If n < 0 Then
+            sign = "-"
+        Else
+            n = -n
+        End If
+        Return sign + Str(-(n \ 3600000)) + ":" + TemporalPad(-((n Mod 3600000) \ 60000), 2) + ":" + TemporalPad(-((n Mod 60000) \ 1000), 2) + "." + TemporalPad(-(n Mod 1000), 3)
+    End Function
+End Class
+
+Public Class TemporalEntry
+    Private Property mState As String
+    Private Property mErrorCode As String
+    Private Property mPosition As Integer
+    Private Property mDateValue As TemporalDateOnly
+    Private Property mTimeValue As TemporalTimeOfDay
+    Private Property mDurationValue As TemporalDurationMillis
+    Internal Sub Constructor(state As String, code As String, position As Integer, dateValue As TemporalDateOnly, timeValue As TemporalTimeOfDay, durationValue As TemporalDurationMillis)
+        mState = state
+        mErrorCode = code
+        mPosition = position
+        mDateValue = dateValue
+        mTimeValue = timeValue
+        mDurationValue = durationValue
+    End Sub
+    Public Property State As String
+        Get
+            Return mState
+        End Get
+    End Property
+    Public Property ErrorCode As String
+        Get
+            Return mErrorCode
+        End Get
+    End Property
+    Public Property Position As Integer
+        Get
+            Return mPosition
+        End Get
+    End Property
+    Public Property DateValue As TemporalDateOnly
+        Get
+            Return mDateValue
+        End Get
+    End Property
+    Public Property TimeValue As TemporalTimeOfDay
+        Get
+            Return mTimeValue
+        End Get
+    End Property
+    Public Property DurationValue As TemporalDurationMillis
+        Get
+            Return mDurationValue
+        End Get
+    End Property
+End Class
+
+Private Class TemporalPatternPart
+    Public Property Token As String
+    Public Property Literal As String
+    Public Sub Constructor(token As String, literal As String)
+        Me.Token = token
+        Me.Literal = literal
+    End Sub
+End Class
+
+' Pattern validation is shared by parsing and formatting.
+Private Function TemporalPattern(pattern As String, dateMode As Boolean) As Array Of TemporalPatternPart
+    If String.Len(pattern) < 1 Or String.Len(pattern) > 128 Then Throw New InvalidArgumentException("Pattern length")
+    Dim parts As Array Of TemporalPatternPart = []
+    Dim seen As String = "|"
+    Dim i As Integer = 0
+    Dim previousToken As Boolean = False
+    While i < String.Len(pattern)
+        Dim ch As String = String.Substring(pattern, i, 1)
+        Dim token As String = ""
+        Dim literal As String = ""
+        If TemporalEqual(ch, "'") Then
+            i += 1
+            Dim closed As Boolean = False
+            While i < String.Len(pattern)
+                ch = String.Substring(pattern, i, 1)
+                If TemporalEqual(ch, "'") Then
+                    If i + 1 < String.Len(pattern) And TemporalEqual(String.Substring(pattern, i + 1, 1), "'") Then
+                        literal += "'"
+                        i += 2
+                        Continue While
+                    End If
+                    i += 1
+                    closed = True
+                    Exit While
+                End If
+                Dim c As Integer = String.Asc(ch)
+                If c < 32 Or c > 126 Then Throw New InvalidArgumentException("Pattern ASCII")
+                literal += ch
+                i += 1
+            End While
+            If Not closed Or literal = "" Then Throw New InvalidArgumentException("Pattern literal")
+        ElseIf TemporalEqual(ch, " ") Or TemporalEqual(ch, "-") Or TemporalEqual(ch, "/") Or TemporalEqual(ch, ":") Or TemporalEqual(ch, ".") Or TemporalEqual(ch, ",") Then
+            literal = ch
+            i += 1
+        Else
+            Dim start As Integer = i
+            While i < String.Len(pattern) And TemporalEqual(String.Substring(pattern, i, 1), ch)
+                i += 1
+            End While
+            token = String.Substring(pattern, start, i - start)
+            Dim allowed As Boolean = False
+            If dateMode Then
+                allowed = TemporalEqual(token, "yyyy") Or TemporalEqual(token, "MM") Or TemporalEqual(token, "dd")
+            Else
+                allowed = TemporalEqual(token, "HH") Or TemporalEqual(token, "hh") Or TemporalEqual(token, "mm") Or TemporalEqual(token, "ss") Or TemporalEqual(token, "f") Or TemporalEqual(token, "ff") Or TemporalEqual(token, "fff") Or TemporalEqual(token, "tt")
+            End If
+            If Not allowed Or previousToken Or String.IndexOf(seen, "|" + token + "|", True) >= 0 Then Throw New InvalidArgumentException("Pattern token")
+            seen += token + "|"
+        End If
+        Array.Append(parts, New TemporalPatternPart(token, literal))
+        previousToken = Not TemporalEqual(token, "")
+    End While
+    If dateMode Then
+        If String.IndexOf(seen, "|yyyy|", True) < 0 Or String.IndexOf(seen, "|MM|", True) < 0 Or String.IndexOf(seen, "|dd|", True) < 0 Then Throw New InvalidArgumentException("Date pattern fields")
+    Else
+        Dim has24 As Boolean = String.IndexOf(seen, "|HH|", True) >= 0
+        Dim has12 As Boolean = String.IndexOf(seen, "|hh|", True) >= 0
+        Dim hasTT As Boolean = String.IndexOf(seen, "|tt|", True) >= 0
+        If has24 = has12 Or has12 <> hasTT Or String.IndexOf(seen, "|mm|", True) < 0 Then Throw New InvalidArgumentException("Time pattern fields")
+        Dim fractions As Integer = 0
+        Dim secondsSeen As Boolean = False
+        For Each part As TemporalPatternPart In parts
+            If TemporalEqual(part.Token, "ss") Then secondsSeen = True
+            If TemporalEqual(String.Left(part.Token, 1), "f") Then
+                fractions += 1
+                If Not secondsSeen Then Throw New InvalidArgumentException("Fraction requires preceding seconds")
+            End If
+        Next
+        If fractions > 1 Then Throw New InvalidArgumentException("Duplicate fraction")
+    End If
+    Return parts
+End Function
+
+Private Function TemporalPrefixPossible(token As String, n As Integer, remaining As Integer) As Boolean
+    Dim low As Integer = 0
+    Dim high As Integer = 9999
+    If TemporalEqual(token, "yyyy") Then low = 1
+    If TemporalEqual(token, "MM") Then
+        low = 1
+        high = 12
+    End If
+    If TemporalEqual(token, "dd") Then
+        low = 1
+        high = 31
+    End If
+    If TemporalEqual(token, "HH") Then high = 23
+    If TemporalEqual(token, "hh") Then
+        low = 1
+        high = 12
+    End If
+    If TemporalEqual(token, "mm") Or TemporalEqual(token, "ss") Then high = 59
+    Dim scale As Integer = 1
+    For i As Integer = 1 To remaining
+        scale *= 10
+    Next
+    Return n * scale <= high And n * scale + scale - 1 >= low
+End Function
+
+Private Function TemporalAnalyze(text As String, pattern As String, dateMode As Boolean) As TemporalEntry
+    Dim parts As Array Of TemporalPatternPart
+    Try
+        parts = TemporalPattern(pattern, dateMode)
+    Catch e As InvalidArgumentException
+        Return New TemporalEntry("Invalid", "Pattern", 0, Nil, Nil, Nil)
+    End Try
+    Dim length As Integer = String.Len(text)
+    If length > 256 Then Return New TemporalEntry("Invalid", "Length", 256, Nil, Nil, Nil)
+    If length = 0 Then Return New TemporalEntry("Empty", "", 0, Nil, Nil, Nil)
+    Dim pos As Integer = 0
+    Dim year As Integer = 0
+    Dim month As Integer = 0
+    Dim day As Integer = 0
+    Dim hour As Integer = 0
+    Dim minute As Integer = 0
+    Dim second As Integer = 0
+    Dim millis As Integer = 0
+    Dim pm As Boolean = False
+    Dim clock12 As Boolean = False
+    For Each part As TemporalPatternPart In parts
+        Dim token As String = part.Token
+        If TemporalEqual(token, "") Or TemporalEqual(token, "tt") Then
+            Dim expected As String = part.Literal
+            If TemporalEqual(token, "tt") Then
+                If pos >= length Then Return New TemporalEntry("Incomplete", "", length, Nil, Nil, Nil)
+                Dim first As String = String.Substring(text, pos, 1)
+                If Not TemporalEqual(first, "A") And Not TemporalEqual(first, "P") Then Return New TemporalEntry("Invalid", "Literal", pos, Nil, Nil, Nil)
+                pm = TemporalEqual(first, "P")
+                expected = first + "M"
+            End If
+            For j As Integer = 0 To String.Len(expected) - 1
+                If pos >= length Then Return New TemporalEntry("Incomplete", "", length, Nil, Nil, Nil)
+                If Not TemporalEqual(String.Substring(text, pos, 1), String.Substring(expected, j, 1)) Then Return New TemporalEntry("Invalid", "Literal", pos, Nil, Nil, Nil)
+                pos += 1
+            Next
+        Else
+            Dim width As Integer = String.Len(token)
+            Dim n As Integer = 0
+            Dim start As Integer = pos
+            For j As Integer = 1 To width
+                If pos >= length Then Return New TemporalEntry("Incomplete", "", length, Nil, Nil, Nil)
+                Dim digit As Integer = String.Asc(String.Substring(text, pos, 1)) - 48
+                If digit < 0 Or digit > 9 Then Return New TemporalEntry("Invalid", "Digit", pos, Nil, Nil, Nil)
+                n = n * 10 + digit
+                pos += 1
+                If Not TemporalPrefixPossible(token, n, width - j) Then Return New TemporalEntry("Invalid", "Range", start, Nil, Nil, Nil)
+            Next
+            Dim low As Integer = 0
+            Dim high As Integer = 9999
+            If TemporalEqual(token, "yyyy") Then
+                low = 1
+                year = n
+            ElseIf TemporalEqual(token, "MM") Then
+                low = 1
+                high = 12
+                month = n
+            ElseIf TemporalEqual(token, "dd") Then
+                low = 1
+                high = 31
+                day = n
+            ElseIf TemporalEqual(token, "HH") Or TemporalEqual(token, "hh") Then
+                high = 23
+                If TemporalEqual(token, "hh") Then
+                    low = 1
+                    high = 12
+                    clock12 = True
+                End If
+                hour = n
+            ElseIf TemporalEqual(token, "mm") Then
+                high = 59
+                minute = n
+            ElseIf TemporalEqual(token, "ss") Then
+                high = 59
+                second = n
+            Else
+                millis = n
+                For j As Integer = width To 2
+                    millis *= 10
+                Next
+            End If
+            If n < low Or n > high Then Return New TemporalEntry("Invalid", "Range", start, Nil, Nil, Nil)
+            If dateMode And year > 0 And month > 0 And day > 0 Then
+                If day > TemporalMonthDays(year, month) Then Return New TemporalEntry("Invalid", "Range", 0, Nil, Nil, Nil)
+            End If
+        End If
+    Next
+    If pos <> length Then Return New TemporalEntry("Invalid", "Length", pos, Nil, Nil, Nil)
+    If clock12 Then
+        hour = hour Mod 12
+        If pm Then hour += 12
+    End If
+    Try
+        If dateMode Then Return New TemporalEntry("Valid", "", pos, New TemporalDateOnly(year, month, day), Nil, Nil)
+        Return New TemporalEntry("Valid", "", pos, Nil, New TemporalTimeOfDay(hour, minute, second, millis), Nil)
+    Catch e As InvalidArgumentException
+        Return New TemporalEntry("Invalid", "Range", 0, Nil, Nil, Nil)
+    End Try
+End Function
+
+Public Function AnalyzeTemporalDate(text As String, pattern As String = "yyyy-MM-dd") As TemporalEntry
+    Return TemporalAnalyze(text, pattern, True)
+End Function
+
+Public Function AnalyzeTemporalTime(text As String, pattern As String = "HH:mm:ss.fff") As TemporalEntry
+    Return TemporalAnalyze(text, pattern, False)
+End Function
+
+Private Function TemporalFormat(dateValue As TemporalDateOnly, timeValue As TemporalTimeOfDay, pattern As String, dateMode As Boolean, displayOnly As Boolean = False) As String
+    Dim parts As Array Of TemporalPatternPart = TemporalPattern(pattern, dateMode)
+    Dim output As String = ""
+    Dim hasSeconds As Boolean = False
+    Dim fractionWidth As Integer = 0
+    For Each part As TemporalPatternPart In parts
+        Dim n As Integer = 0
+        If TemporalEqual(part.Token, "") Then
+            output += part.Literal
+            Continue For
+        ElseIf TemporalEqual(part.Token, "yyyy") Then
+            n = dateValue.Year
+        ElseIf TemporalEqual(part.Token, "MM") Then
+            n = dateValue.Month
+        ElseIf TemporalEqual(part.Token, "dd") Then
+            n = dateValue.Day
+        ElseIf TemporalEqual(part.Token, "HH") Then
+            n = timeValue.Hour
+        ElseIf TemporalEqual(part.Token, "hh") Then
+            n = timeValue.Hour Mod 12
+            If n = 0 Then n = 12
+        ElseIf TemporalEqual(part.Token, "mm") Then
+            n = timeValue.Minute
+        ElseIf TemporalEqual(part.Token, "ss") Then
+            n = timeValue.Second
+            hasSeconds = True
+        ElseIf TemporalEqual(part.Token, "tt") Then
+            If timeValue.Hour < 12 Then
+                output += "AM"
+            Else
+                output += "PM"
+            End If
+            Continue For
+        Else
+            fractionWidth = String.Len(part.Token)
+            n = timeValue.Millisecond
+            Dim divisor As Integer = 1
+            For j As Integer = fractionWidth To 2
+                divisor *= 10
+            Next
+            If Not displayOnly And n Mod divisor <> 0 Then Throw New InvalidArgumentException("Precision loss")
+            n = n \ divisor
+        End If
+        output += TemporalPad(n, String.Len(part.Token))
+    Next
+    If Not dateMode And Not displayOnly Then
+        If Not hasSeconds And timeValue.Second <> 0 Then Throw New InvalidArgumentException("Omitted seconds")
+        If fractionWidth = 0 And timeValue.Millisecond <> 0 Then Throw New InvalidArgumentException("Omitted milliseconds")
+    End If
+    Return output
+End Function
+
+Public Function FormatTemporalDate(value As TemporalDateOnly, pattern As String) As String
+    If value = Nil Then Throw New InvalidArgumentException("Nil date")
+    Return TemporalFormat(value, Nil, pattern, True)
+End Function
+
+Public Function FormatTemporalTime(value As TemporalTimeOfDay, pattern As String) As String
+    If value = Nil Then Throw New InvalidArgumentException("Nil time")
+    Return TemporalFormat(Nil, value, pattern, False)
+End Function
+
+''' Display-only truncation of omitted seconds/fractions; never changes the value.
+Public Function FormatTemporalTimeDisplay(value As TemporalTimeOfDay, pattern As String) As String
+    If value = Nil Then Throw New InvalidArgumentException("Nil time")
+    Return TemporalFormat(Nil, value, pattern, False, True)
+End Function
+
+Public Function AnalyzeTemporalDuration(text As String) As TemporalEntry
+    Dim length As Integer = String.Len(text)
+    If length > 256 Then Return New TemporalEntry("Invalid", "Length", 256, Nil, Nil, Nil)
+    If length = 0 Then Return New TemporalEntry("Empty", "", 0, Nil, Nil, Nil)
+    Dim pos As Integer = 0
+    Dim negative As Boolean = TemporalEqual(String.Left(text, 1), "-")
+    If negative Then pos = 1
+    Dim start As Integer = pos
+    Dim hours As Integer = 0
+    While pos < length And Not TemporalEqual(String.Substring(text, pos, 1), ":")
+        Dim digit As Integer = String.Asc(String.Substring(text, pos, 1)) - 48
+        If digit < 0 Or digit > 9 Then Return New TemporalEntry("Invalid", "Digit", pos, Nil, Nil, Nil)
+        If hours < -256204778801 Or (hours = -256204778801 And digit > 5) Then Return New TemporalEntry("Invalid", "Overflow", pos, Nil, Nil, Nil)
+        hours = hours * 10 - digit
+        pos += 1
+    End While
+    If pos - start > 1 And TemporalEqual(String.Substring(text, start, 1), "0") Then Return New TemporalEntry("Invalid", "NonCanonical", start, Nil, Nil, Nil)
+    If pos = length Then Return New TemporalEntry("Incomplete", "", length, Nil, Nil, Nil)
+    If pos = start Then Return New TemporalEntry("Invalid", "Digit", start, Nil, Nil, Nil)
+    pos += 1
+    Dim remainder As Integer = 0
+    For component As Integer = 0 To 2
+        Dim width As Integer = 2
+        If component = 2 Then width = 3
+        Dim n As Integer = 0
+        start = pos
+        For j As Integer = 1 To width
+            If pos >= length Then Return New TemporalEntry("Incomplete", "", length, Nil, Nil, Nil)
+            Dim digit As Integer = String.Asc(String.Substring(text, pos, 1)) - 48
+            If digit < 0 Or digit > 9 Then Return New TemporalEntry("Invalid", "Digit", pos, Nil, Nil, Nil)
+            n = n * 10 + digit
+            pos += 1
+            If component < 2 And j = 1 And n > 5 Then Return New TemporalEntry("Invalid", "Range", start, Nil, Nil, Nil)
+        Next
+        If component < 2 And n > 59 Then Return New TemporalEntry("Invalid", "Range", start, Nil, Nil, Nil)
+        If component = 0 Then remainder = n * 60000
+        If component = 1 Then remainder += n * 1000
+        If component = 2 Then remainder += n
+        If component < 2 Then
+            If pos >= length Then Return New TemporalEntry("Incomplete", "", length, Nil, Nil, Nil)
+            Dim separator As String = ":"
+            If component = 1 Then separator = "."
+            If Not TemporalEqual(String.Substring(text, pos, 1), separator) Then Return New TemporalEntry("Invalid", "Literal", pos, Nil, Nil, Nil)
+            pos += 1
+        End If
+    Next
+    If pos <> length Then Return New TemporalEntry("Invalid", "Length", pos, Nil, Nil, Nil)
+    Dim millis As Integer = hours * 3600000
+    Dim minimum As Integer = -9223372036854775807 - 1
+    If millis < minimum + remainder Then Return New TemporalEntry("Invalid", "Overflow", 0, Nil, Nil, Nil)
+    millis -= remainder
+    If Not negative Then
+        If millis = minimum Then Return New TemporalEntry("Invalid", "Overflow", 0, Nil, Nil, Nil)
+        millis = -millis
+    ElseIf millis = 0 Then
+        Return New TemporalEntry("Invalid", "NonCanonical", 0, Nil, Nil, Nil)
+    End If
+    Return New TemporalEntry("Valid", "", pos, Nil, Nil, New TemporalDurationMillis(millis))
+End Function
+
+Public Function ResolveTemporalLocal(dateValue As TemporalDateOnly, timeValue As TemporalTimeOfDay, ianaName As String, overlap As String) As ZonedDateTime
+    If dateValue = Nil Or timeValue = Nil Then Throw New InvalidArgumentException("Nil calendar value")
+    If Not TemporalEqual(overlap, "reject") And Not TemporalEqual(overlap, "earlier") And Not TemporalEqual(overlap, "later") Then Throw New InvalidArgumentException("Overlap policy")
+    Dim zone As New NamedTimeZone(ianaName)
+    Return zone.ResolveLocal(dateValue.Year, dateValue.Month, dateValue.Day, timeValue.Hour, timeValue.Minute, timeValue.Second, timeValue.Millisecond, overlap)
+End Function
+
+Public Function FormatTemporalInstant(instant As DateTime, ianaName As String, datePattern As String, timePattern As String) As String
+    Dim zone As New NamedTimeZone(ianaName)
+    Dim value As ZonedDateTime = zone.At(instant)
+    Return FormatTemporalDate(New TemporalDateOnly(value.Year, value.Month, value.Day), datePattern) + " " + FormatTemporalTimeDisplay(New TemporalTimeOfDay(value.Hour, value.Minute, value.Second, value.Millisecond), timePattern)
+End Function
+
+Public Function TemporalInstantFromTimestamp(text As String) As DateTime
+    Return RequireTimestamp(text).Instant
+End Function
+
+Public Function RequireTemporalDate(text As String, pattern As String = "yyyy-MM-dd") As TemporalDateOnly
+    Dim entry As TemporalEntry = AnalyzeTemporalDate(text, pattern)
+    If entry.State <> "Valid" Then Throw New InvalidArgumentException(entry.State + ":" + entry.ErrorCode + " at " + Str(entry.Position))
+    Return entry.DateValue
+End Function
+
+Public Function RequireTemporalTime(text As String, pattern As String = "HH:mm:ss.fff") As TemporalTimeOfDay
+    Dim entry As TemporalEntry = AnalyzeTemporalTime(text, pattern)
+    If entry.State <> "Valid" Then Throw New InvalidArgumentException(entry.State + ":" + entry.ErrorCode + " at " + Str(entry.Position))
+    Return entry.TimeValue
+End Function
+
+Public Function RequireTemporalDuration(text As String) As TemporalDurationMillis
+    Dim entry As TemporalEntry = AnalyzeTemporalDuration(text)
+    If entry.State <> "Valid" Then Throw New InvalidArgumentException(entry.State + ":" + entry.ErrorCode + " at " + Str(entry.Position))
+    Return entry.DurationValue
+End Function

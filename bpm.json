@@ -1,0 +1,25 @@
+{
+    "schema": 1,
+    "buoy": "0.72.0",
+    "dependencies": {
+        "dateparsekit": {
+            "git": "https://github.com/BuoyBay/dateparsekit.git",
+            "rev": "refs/heads/main"
+        },
+        "timezonekit": {
+            "git": "https://github.com/BuoyBay/timezonekit.git",
+            "rev": "refs/heads/main"
+        }
+    },
+    "files": [
+        "manifest.json",
+        "modules",
+        "resources",
+        "README.md",
+        "LICENSE",
+        "LICENSE-MIT.txt",
+        "LICENSE-APACHE.txt",
+        "LICENSE-DOCS.txt",
+        "NOTICE.md"
+    ]
+}
