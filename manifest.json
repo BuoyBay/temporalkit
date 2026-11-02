@@ -1,1 +1,1 @@
-{"schema":1,"name":"temporalkit","version":"0.1.0","description":"Gregorian dates, wall time, elapsed milliseconds"}
+{"schema":1,"name":"temporalkit","version":"0.1.0","description":"Dates, wall time, durations"}
