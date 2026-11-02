@@ -67,5 +67,3 @@ Named zones retain timezonekit's pinned IANA data and UTC coverage
 unknown zones and invalid overlap policy throw InvalidArgumentException. Elapsed
 durations are independent of calendar dates and daylight saving transitions;
 there is no duration-to-calendar arithmetic API. Values are immutable references.
-
-Maintainers run the private validation suite before release. See the repository README for public build instructions.
