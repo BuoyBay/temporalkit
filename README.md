@@ -1,4 +1,4 @@
-# Represent Gregorian dates, wall time and elapsed milliseconds
+# Gregorian dates, wall time, elapsed milliseconds
 
 Import `temporalkit` from a sealed package. Requires existing dateparsekit and
 timezonekit 0.1.0 packages. No host locale or native calendar parser is used.
